@@ -1,0 +1,587 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Vasl — Expense Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;1,400&family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600&display=swap" rel="stylesheet" />
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; background: #f5f0e6; }
+    input[type=number]::-webkit-inner-spin-button { opacity: 0.4; }
+    input[type=date]::-webkit-calendar-picker-indicator { opacity: 0.35; cursor: pointer; }
+    ::-webkit-scrollbar { width: 5px; height: 5px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: rgba(191,147,62,0.28); border-radius: 3px; }
+    select option { background: #fdfaf4; color: #3c060d; }
+    @keyframes fadeIn { from { opacity:0; transform:translateY(6px); } to { opacity:1; transform:translateY(0); } }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .entry-row { animation: fadeIn 0.25s ease; }
+  </style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useMemo, useCallback } = React;
+
+// ─── JSONBin ─────────────────────────────────────────────────────────────────
+const BIN_ID  = '69dfdd5baaba882197024c12';
+const API_KEY = '$2a$10$.mEZPT4TR4wXPaD34gZBUurtvrBPIcRW9uX8Wjf6cPz9/VeZjDmU2';
+const BIN_URL = `https://api.jsonbin.io/v3/b/${BIN_ID}`;
+const HEADERS = { 'X-Master-Key': API_KEY };
+
+const readBin = async () => {
+  const r = await fetch(BIN_URL, { headers: { ...HEADERS, 'X-Bin-Meta': 'false' } });
+  if (!r.ok) throw new Error(`JSONBin read failed: ${r.status}`);
+  return await r.json();
+};
+
+const writeBin = async (payload) => {
+  const r = await fetch(BIN_URL, {
+    method: 'PUT',
+    headers: { ...HEADERS, 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!r.ok) throw new Error(`JSONBin write failed: ${r.status}`);
+  return await r.json();
+};
+
+// ─── Brand Palette ────────────────────────────────────────────────────────────
+const C = {
+  ivory:  '#f5f0e6',
+  wine:   '#3c060d',
+  gold:   '#bf933e',
+  green:  '#1c4a35',
+  noir:   '#110509',
+  card:   '#fdfaf4',
+  border: 'rgba(191,147,62,0.18)',
+  row:    'rgba(60,6,13,0.015)',
+  rowH:   'rgba(191,147,62,0.05)',
+};
+
+const CATS = ['Marketing','Manufacturing','Packaging','Logistics','Operations','R&D','Other'];
+
+const CAT = {
+  Marketing:     { bg:'rgba(191,147,62,0.11)', text:'#7a5a0a', dot:'#bf933e' },
+  Manufacturing: { bg:'rgba(60,6,13,0.09)',    text:'#3c060d', dot:'#5a1020' },
+  Packaging:     { bg:'rgba(28,74,53,0.10)',   text:'#1a4230', dot:'#1c4a35' },
+  Logistics:     { bg:'rgba(140,100,20,0.10)', text:'#6b4a08', dot:'#9a7020' },
+  Operations:    { bg:'rgba(90,20,35,0.08)',   text:'#5c1a28', dot:'#8b3045' },
+  'R&D':         { bg:'rgba(28,74,53,0.14)',   text:'#0d3020', dot:'#1c4a35' },
+  Other:         { bg:'rgba(100,80,60,0.08)',  text:'#5a4a42', dot:'#8a7060' },
+};
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+const uid     = () => Math.random().toString(36).slice(2,9) + Date.now().toString(36);
+const pkr     = n  => 'Rs. ' + Math.abs(Number(n)).toLocaleString('en-PK',{maximumFractionDigits:0});
+const fmtDate = d  => { if (!d) return '—'; const dt = new Date(d+'T00:00:00'); return dt.toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'}); };
+const nowYM   = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`; };
+
+// ─── SVG Icons ────────────────────────────────────────────────────────────────
+const Ic = {
+  spend:  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></svg>,
+  cal:    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>,
+  ads:    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M3 11l19-9-9 19-2-8-8-2z"/></svg>,
+  bank:   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M3 21h18M3 10h18M5 6l7-3 7 3M4 10v11M8 10v11M12 10v11M16 10v11M20 10v11"/></svg>,
+  plus:   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M12 5v14M5 12h14"/></svg>,
+  x:      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 6L6 18M6 6l12 12"/></svg>,
+  trash:  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/></svg>,
+  edit:   <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>,
+  check:  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M20 6L9 17l-5-5"/></svg>,
+  sync:   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></svg>,
+  spin:   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{animation:'spin 0.8s linear infinite',display:'block'}}><path d="M21 12a9 9 0 11-6.219-8.56"/></svg>,
+};
+
+// ─── App ──────────────────────────────────────────────────────────────────────
+function App() {
+  const [expenses,    setExpenses]    = useState([]);
+  const [bankBalance, setBankBalance] = useState(0);
+  const [loading,     setLoading]     = useState(true);
+  const [syncState,   setSyncState]   = useState('idle'); // idle | saving | error | done
+  const [showModal,   setShowModal]   = useState(false);
+  const [filterCat,   setFilterCat]   = useState('All');
+  const [filterMonth, setFilterMonth] = useState('All');
+  const [search,      setSearch]      = useState('');
+  const [sortDir,     setSortDir]     = useState('desc');
+  const [deleteId,    setDeleteId]    = useState(null);
+  const [toast,       setToast]       = useState(null);
+  const [saving,      setSaving]      = useState(false);
+  const [form,        setForm]        = useState({ date:new Date().toISOString().slice(0,10), category:'Marketing', description:'', amount:'' });
+  const [formErr,     setFormErr]     = useState('');
+  const [hovRow,      setHovRow]      = useState(null);
+  const [editBal,     setEditBal]     = useState(false);
+  const [balInput,    setBalInput]    = useState('');
+
+  // ── Load ────────────────────────────────────────────────────────────────────
+  useEffect(() => {
+    readBin()
+      .then(data => {
+        setExpenses(Array.isArray(data.expenses) ? data.expenses : []);
+        setBankBalance(Number(data.bankBalance) || 0);
+      })
+      .catch(() => setSyncState('error'))
+      .finally(() => setLoading(false));
+  }, []);
+
+  // ── Persist ─────────────────────────────────────────────────────────────────
+  const persist = useCallback(async (exps, bal) => {
+    setSyncState('saving');
+    try {
+      await writeBin({ expenses: exps, bankBalance: bal });
+      setSyncState('done');
+      setTimeout(() => setSyncState('idle'), 2500);
+    } catch {
+      setSyncState('error');
+    }
+  }, []);
+
+  const flash = (msg, type='ok') => { setToast({msg,type}); setTimeout(()=>setToast(null),3200); };
+
+  // ── Calculations ─────────────────────────────────────────────────────────────
+  const S = useMemo(() => {
+    const total   = expenses.reduce((s,e)=>s+Number(e.amount),0);
+    const ym      = nowYM();
+    const month   = expenses.filter(e=>e.date?.slice(0,7)===ym).reduce((s,e)=>s+Number(e.amount),0);
+    const adSpend = expenses.filter(e=>e.category==='Marketing').reduce((s,e)=>s+Number(e.amount),0);
+    const adCount = expenses.filter(e=>e.category==='Marketing').length;
+    const cats    = {};
+    expenses.forEach(e => { cats[e.category]=(cats[e.category]||0)+Number(e.amount); });
+    const remaining = bankBalance - total;
+    return { total, month, adSpend, adCount, cats, remaining };
+  }, [expenses, bankBalance]);
+
+  const months = useMemo(()=>{
+    const s = new Set(expenses.map(e=>e.date?.slice(0,7)).filter(Boolean));
+    return Array.from(s).sort().reverse();
+  },[expenses]);
+
+  const filtered = useMemo(()=>{
+    let l = [...expenses];
+    if (filterCat!=='All')   l=l.filter(e=>e.category===filterCat);
+    if (filterMonth!=='All') l=l.filter(e=>e.date?.slice(0,7)===filterMonth);
+    if (search.trim())       l=l.filter(e=>e.description.toLowerCase().includes(search.toLowerCase()));
+    l.sort((a,b)=>sortDir==='desc'?new Date(b.date)-new Date(a.date):new Date(a.date)-new Date(b.date));
+    return l;
+  },[expenses,filterCat,filterMonth,search,sortDir]);
+
+  const filteredTotal = useMemo(()=>filtered.reduce((s,e)=>s+Number(e.amount),0),[filtered]);
+
+  // ── Handlers ─────────────────────────────────────────────────────────────────
+  const handleAdd = async () => {
+    if (!form.date||!form.description.trim()||!form.amount) return setFormErr('Please fill all fields.');
+    if (isNaN(Number(form.amount))||Number(form.amount)<=0) return setFormErr('Amount must be a positive number.');
+    setSaving(true);
+    const entry = { id:uid(), date:form.date, category:form.category, description:form.description, amount:Number(form.amount), createdAt:Date.now() };
+    const next  = [entry,...expenses];
+    await persist(next, bankBalance);
+    setExpenses(next);
+    setShowModal(false);
+    setForm({ date:new Date().toISOString().slice(0,10), category:'Marketing', description:'', amount:'' });
+    setFormErr('');
+    setSaving(false);
+    flash('Expense saved & synced.');
+  };
+
+  const handleDelete = async (id) => {
+    const next = expenses.filter(e=>e.id!==id);
+    await persist(next, bankBalance);
+    setExpenses(next);
+    setDeleteId(null);
+    flash('Entry deleted.','warn');
+  };
+
+  const handleSaveBalance = async () => {
+    const val = parseFloat(balInput);
+    if (isNaN(val)||val<0) return;
+    await persist(expenses, val);
+    setBankBalance(val);
+    setEditBal(false);
+    flash('Bank balance updated.');
+  };
+
+  // ── Balance card styling ─────────────────────────────────────────────────────
+  const balPct    = bankBalance>0 ? S.remaining/bankBalance : 1;
+  const balColor  = S.remaining<0 ? '#a82020' : balPct<0.2 ? '#b86200' : C.green;
+  const balAccent = S.remaining<0 ? '#c02020' : balPct<0.2 ? '#e08020' : C.green;
+
+  // ── Sync indicator ───────────────────────────────────────────────────────────
+  const syncDot   = { idle:'rgba(28,74,53,0.7)', saving:C.gold, error:'#e05050', done:C.green }[syncState];
+  const syncLabel = { idle:'Synced', saving:'Saving…', error:'Sync error', done:'Saved ✓' }[syncState];
+
+  const todayStr    = new Date().toLocaleDateString('en-GB',{day:'numeric',month:'long',year:'numeric'});
+  const curMonthStr = new Date().toLocaleString('en',{month:'long',year:'numeric'});
+
+  // ── Loading screen ────────────────────────────────────────────────────────────
+  if (loading) return (
+    <div style={{display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',height:'100vh',background:C.ivory,gap:'14px'}}>
+      <div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:'34px',color:C.gold,letterSpacing:'3px',fontWeight:600}}>وصل</div>
+      <div style={{display:'flex',alignItems:'center',gap:'8px',color:'rgba(60,6,13,0.38)',fontSize:'12px',fontFamily:"'DM Sans',sans-serif",fontWeight:400}}>
+        {Ic.spin} Connecting to JSONBin…
+      </div>
+    </div>
+  );
+
+  return (
+    <div style={{background:C.ivory,minHeight:'100vh',fontFamily:"'DM Sans',sans-serif",color:C.wine}}>
+
+      {/* ── HEADER ───────────────────────────────────────────────────────────── */}
+      <header style={{background:C.wine,height:'60px',padding:'0 36px',display:'flex',alignItems:'center',justifyContent:'space-between',borderBottom:'1px solid rgba(191,147,62,0.22)',position:'sticky',top:0,zIndex:50}}>
+        <div style={{display:'flex',alignItems:'center',gap:'16px'}}>
+          <span style={{fontFamily:"'Cormorant Garamond',serif",fontSize:'26px',color:C.gold,fontWeight:600,letterSpacing:'2px',lineHeight:1}}>وصل</span>
+          <span style={{width:'1px',height:'22px',background:'rgba(191,147,62,0.28)'}}/>
+          <span style={{fontSize:'11px',letterSpacing:'1.8px',textTransform:'uppercase',fontWeight:500,color:'rgba(245,240,230,0.45)'}}>Expense Dashboard</span>
+        </div>
+        <div style={{display:'flex',alignItems:'center',gap:'20px'}}>
+          <div style={{display:'flex',alignItems:'center',gap:'6px'}}>
+            <span style={{width:'6px',height:'6px',borderRadius:'50%',background:syncDot,flexShrink:0,transition:'background 0.3s'}}/>
+            <span style={{fontSize:'11px',color:'rgba(245,240,230,0.35)',transition:'color 0.3s'}}>{syncLabel}</span>
+          </div>
+          <span style={{fontSize:'11px',color:'rgba(245,240,230,0.28)'}}>{todayStr}</span>
+          <button onClick={()=>setShowModal(true)} style={{background:C.gold,color:C.noir,border:'none',borderRadius:'6px',padding:'7px 16px',fontSize:'12px',fontWeight:600,cursor:'pointer',display:'flex',alignItems:'center',gap:'6px',fontFamily:"'DM Sans',sans-serif",letterSpacing:'0.3px'}}>
+            {Ic.plus} Add Expense
+          </button>
+        </div>
+      </header>
+
+      <main style={{padding:'30px 36px',maxWidth:'1200px',margin:'0 auto'}}>
+
+        {/* ── SUMMARY CARDS ────────────────────────────────────────────────── */}
+        <Label>Overview</Label>
+        <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:'16px',marginBottom:'36px'}}>
+
+          {/* Card 1 — Total Spend */}
+          <Card icon={Ic.spend} label="Total Spend" accent={C.gold}>
+            <Val>{pkr(S.total)}</Val>
+            <Sub>{expenses.length} entries all time</Sub>
+          </Card>
+
+          {/* Card 2 — This Month */}
+          <Card icon={Ic.cal} label="This Month" accent={C.wine}>
+            <Val>{pkr(S.month)}</Val>
+            <Sub>{curMonthStr}</Sub>
+          </Card>
+
+          {/* Card 3 — Ad Spend (Marketing) */}
+          <Card icon={Ic.ads} label="Ad Spend" accent={C.gold}>
+            <Val>{pkr(S.adSpend)}</Val>
+            <Sub>{S.adCount} marketing {S.adCount===1?'entry':'entries'}</Sub>
+          </Card>
+
+          {/* Card 4 — Bank Balance */}
+          <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:'10px',padding:'20px 22px',position:'relative',overflow:'hidden'}}>
+            <div style={{position:'absolute',top:0,left:0,width:'3px',height:'100%',background:balAccent,borderRadius:'10px 0 0 10px',transition:'background 0.4s'}}/>
+            <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'12px'}}>
+              <span style={{fontSize:'10px',fontWeight:600,letterSpacing:'1.5px',textTransform:'uppercase',color:'rgba(60,6,13,0.44)'}}>Bank Balance</span>
+              <span style={{color:'rgba(60,6,13,0.2)'}}>{Ic.bank}</span>
+            </div>
+
+            {editBal ? (
+              <div style={{marginBottom:'6px'}}>
+                <div style={{display:'flex',gap:'6px',alignItems:'center',marginBottom:'4px'}}>
+                  <input
+                    autoFocus
+                    type="number"
+                    placeholder="Enter total budget"
+                    value={balInput}
+                    onChange={e=>setBalInput(e.target.value)}
+                    onKeyDown={e=>{if(e.key==='Enter')handleSaveBalance();if(e.key==='Escape')setEditBal(false);}}
+                    style={{flex:1,background:C.ivory,border:`1px solid ${C.gold}`,borderRadius:'5px',padding:'6px 9px',fontSize:'13px',color:C.wine,outline:'none',fontFamily:"'DM Sans',sans-serif",minWidth:0}}
+                  />
+                  <button onClick={handleSaveBalance} title="Save" style={{background:C.gold,border:'none',borderRadius:'5px',padding:'7px',cursor:'pointer',display:'flex',alignItems:'center',color:C.noir}}>{Ic.check}</button>
+                  <button onClick={()=>setEditBal(false)} title="Cancel" style={{background:'transparent',border:`1px solid ${C.border}`,borderRadius:'5px',padding:'7px',cursor:'pointer',display:'flex',alignItems:'center',color:'rgba(60,6,13,0.4)'}}>{Ic.x}</button>
+                </div>
+                <div style={{fontSize:'10px',color:'rgba(60,6,13,0.35)'}}>Set your total available budget</div>
+              </div>
+            ) : (
+              <div style={{display:'flex',alignItems:'baseline',gap:'6px',marginBottom:'4px'}}>
+                <div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:'26px',fontWeight:600,lineHeight:1.1,color:balColor,transition:'color 0.4s'}}>
+                  {S.remaining<0 ? '−' : ''}{pkr(S.remaining)}
+                </div>
+                <button onClick={()=>{setBalInput(bankBalance.toString());setEditBal(true);}} title="Edit budget" style={{background:'transparent',border:'none',cursor:'pointer',color:'rgba(60,6,13,0.28)',padding:'2px',display:'flex',alignItems:'center',marginLeft:'2px'}}>
+                  {Ic.edit}
+                </button>
+              </div>
+            )}
+
+            {!editBal && (
+              <div style={{fontSize:'11px',color:'rgba(60,6,13,0.38)'}}>
+                {bankBalance>0
+                  ? `Budget ${pkr(bankBalance)} · Spent ${pkr(S.total)}`
+                  : <span style={{cursor:'pointer',textDecoration:'underline dotted'}} onClick={()=>{setBalInput('');setEditBal(true);}}>Click ✎ to set your budget</span>
+                }
+              </div>
+            )}
+            {!editBal && S.remaining<0 && (
+              <div style={{marginTop:'6px',fontSize:'10px',fontWeight:600,letterSpacing:'0.3px',color:'#a82020'}}>⚠ Over budget by {pkr(Math.abs(S.remaining))}</div>
+            )}
+            {!editBal && S.remaining>=0 && balPct<0.2 && bankBalance>0 && (
+              <div style={{marginTop:'6px',fontSize:'10px',fontWeight:600,letterSpacing:'0.3px',color:'#b86200'}}>⚠ Under 20% remaining</div>
+            )}
+          </div>
+
+        </div>
+
+        {/* ── TWO-COLUMN LAYOUT ─────────────────────────────────────────────── */}
+        <div style={{display:'grid',gridTemplateColumns:'1fr 262px',gap:'20px',alignItems:'start'}}>
+
+          {/* ── TABLE ──────────────────────────────────────────────────────── */}
+          <div>
+            <Label>Transactions</Label>
+
+            {/* Toolbar */}
+            <div style={{display:'flex',gap:'10px',marginBottom:'14px',flexWrap:'wrap'}}>
+              <select value={filterCat} onChange={e=>setFilterCat(e.target.value)} style={sel}>
+                <option value="All">All Categories</option>
+                {CATS.map(c=><option key={c}>{c}</option>)}
+              </select>
+              <select value={filterMonth} onChange={e=>setFilterMonth(e.target.value)} style={sel}>
+                <option value="All">All Months</option>
+                {months.map(m=><option key={m} value={m}>{new Date(m+'-01').toLocaleString('en',{month:'long',year:'numeric'})}</option>)}
+              </select>
+              <input
+                placeholder="Search description…"
+                value={search}
+                onChange={e=>setSearch(e.target.value)}
+                style={{...sel,flex:1,minWidth:'160px'}}
+              />
+            </div>
+
+            {/* Table */}
+            <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:'10px',overflow:'hidden'}}>
+              <table style={{width:'100%',borderCollapse:'collapse'}}>
+                <thead>
+                  <tr style={{background:C.wine}}>
+                    <TH sortable onClick={()=>setSortDir(d=>d==='desc'?'asc':'desc')}>
+                      Date {sortDir==='desc'?'↓':'↑'}
+                    </TH>
+                    <TH>Category</TH>
+                    <TH>Description</TH>
+                    <TH right>Amount</TH>
+                    <TH center> </TH>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filtered.length===0 ? (
+                    <tr><td colSpan={5}>
+                      <div style={{padding:'64px 32px',textAlign:'center'}}>
+                        <div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:'22px',color:'rgba(60,6,13,0.26)',marginBottom:'8px'}}>No expenses found.</div>
+                        <div style={{fontSize:'12px',color:'rgba(60,6,13,0.2)'}}>Add your first entry or adjust the filters above.</div>
+                      </div>
+                    </td></tr>
+                  ) : filtered.map((e,i)=>(
+                    <tr
+                      key={e.id}
+                      className="entry-row"
+                      onMouseEnter={()=>setHovRow(e.id)}
+                      onMouseLeave={()=>setHovRow(null)}
+                      style={{background:hovRow===e.id?C.rowH:i%2===0?'transparent':C.row,transition:'background 0.12s'}}>
+                      <TD>{fmtDate(e.date)}</TD>
+                      <TD>
+                        <span style={{display:'inline-flex',alignItems:'center',gap:'5px',padding:'3px 9px',borderRadius:'20px',fontSize:'11px',fontWeight:500,background:CAT[e.category]?.bg||CAT.Other.bg,color:CAT[e.category]?.text||CAT.Other.text,whiteSpace:'nowrap'}}>
+                          <span style={{width:'5px',height:'5px',borderRadius:'50%',background:CAT[e.category]?.dot||CAT.Other.dot,flexShrink:0}}/>
+                          {e.category}
+                        </span>
+                      </TD>
+                      <TD max>{e.description||'—'}</TD>
+                      <td style={{padding:'12px 16px',textAlign:'right',borderBottom:`1px solid rgba(191,147,62,0.09)`}}>
+                        <span style={{fontFamily:"'Cormorant Garamond',serif",fontSize:'16px',fontWeight:600,color:C.wine}}>{pkr(e.amount)}</span>
+                      </td>
+                      <td style={{padding:'12px 12px',textAlign:'center',borderBottom:`1px solid rgba(191,147,62,0.09)`,minWidth:'80px'}}>
+                        {deleteId===e.id ? (
+                          <span style={{display:'flex',gap:'5px',justifyContent:'center'}}>
+                            <button onClick={()=>handleDelete(e.id)} style={{...mb,color:'#a82020',borderColor:'rgba(168,32,32,0.22)',fontSize:'10px'}}>Delete</button>
+                            <button onClick={()=>setDeleteId(null)} style={{...mb,color:'rgba(60,6,13,0.38)',fontSize:'10px'}}>Cancel</button>
+                          </span>
+                        ) : (
+                          <button onClick={()=>setDeleteId(e.id)} title="Delete"
+                            style={{background:'transparent',border:'none',cursor:'pointer',color:'rgba(60,6,13,0.2)',padding:'4px',borderRadius:'4px',display:'flex',alignItems:'center',margin:'0 auto',transition:'color 0.15s'}}
+                            onMouseEnter={ev=>ev.currentTarget.style.color='#a82020'}
+                            onMouseLeave={ev=>ev.currentTarget.style.color='rgba(60,6,13,0.2)'}>
+                            {Ic.trash}
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+
+              {filtered.length>0 && (
+                <div style={{padding:'11px 16px',borderTop:`1px solid ${C.border}`,display:'flex',justifyContent:'space-between',alignItems:'center',background:'rgba(191,147,62,0.02)'}}>
+                  <span style={{fontSize:'11px',color:'rgba(60,6,13,0.32)'}}>{filtered.length} {filtered.length===1?'entry':'entries'}{(filterCat!=='All'||filterMonth!=='All'||search.trim())?'  ·  filtered':''}</span>
+                  <span style={{fontFamily:"'Cormorant Garamond',serif",fontSize:'18px',fontWeight:600,color:C.wine}}>{pkr(filteredTotal)}</span>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* ── SIDEBAR ────────────────────────────────────────────────────── */}
+          <div>
+            <Label>By Category</Label>
+            <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:'10px',padding:'20px 18px'}}>
+              {CATS.filter(c=>S.cats[c]>0).length===0 ? (
+                <div style={{padding:'30px 0',textAlign:'center',color:'rgba(60,6,13,0.26)',fontSize:'12px'}}>No data yet.</div>
+              ) : CATS.filter(c=>S.cats[c]).sort((a,b)=>(S.cats[b]||0)-(S.cats[a]||0)).map(cat=>{
+                const amt  = S.cats[cat]||0;
+                const pct  = S.total>0?(amt/S.total*100).toFixed(1):0;
+                const barW = S.total>0?(amt/S.total*100):0;
+                return (
+                  <div key={cat} style={{marginBottom:'14px'}}>
+                    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'5px'}}>
+                      <span style={{fontSize:'12px',fontWeight:500,color:C.wine,display:'flex',alignItems:'center',gap:'6px'}}>
+                        <span style={{width:'6px',height:'6px',borderRadius:'50%',background:CAT[cat]?.dot||CAT.Other.dot,flexShrink:0}}/>
+                        {cat}
+                      </span>
+                      <span style={{fontSize:'11px',color:'rgba(60,6,13,0.4)'}}>{pct}%</span>
+                    </div>
+                    <div style={{background:'rgba(60,6,13,0.07)',borderRadius:'4px',height:'5px',overflow:'hidden'}}>
+                      <div style={{height:'100%',width:`${barW}%`,background:CAT[cat]?.dot||CAT.Other.dot,borderRadius:'4px',transition:'width 0.5s ease'}}/>
+                    </div>
+                    <div style={{fontSize:'11px',color:'rgba(60,6,13,0.38)',marginTop:'3px',textAlign:'right',fontFamily:"'Cormorant Garamond',serif",fontWeight:600}}>{pkr(amt)}</div>
+                  </div>
+                );
+              })}
+
+              {S.total>0 && (
+                <div style={{borderTop:`1px solid ${C.border}`,marginTop:'6px',paddingTop:'14px',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                  <span style={{fontSize:'10px',color:'rgba(60,6,13,0.4)',textTransform:'uppercase',letterSpacing:'1px',fontWeight:600}}>Total</span>
+                  <span style={{fontFamily:"'Cormorant Garamond',serif",fontSize:'17px',fontWeight:600,color:C.wine}}>{pkr(S.total)}</span>
+                </div>
+              )}
+            </div>
+          </div>
+
+        </div>
+      </main>
+
+      {/* ── ADD EXPENSE MODAL ─────────────────────────────────────────────────── */}
+      {showModal && (
+        <div
+          onClick={e=>{if(e.target===e.currentTarget){setShowModal(false);setFormErr('');}}}
+          style={{position:'fixed',inset:0,background:'rgba(17,5,9,0.65)',backdropFilter:'blur(8px)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:100,padding:'20px'}}>
+          <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:'14px',padding:'34px',width:'100%',maxWidth:'420px',boxShadow:'0 24px 80px rgba(17,5,9,0.35)',animation:'fadeIn 0.2s ease'}}>
+            <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',marginBottom:'6px'}}>
+              <div>
+                <div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:'24px',fontWeight:600,color:C.wine,lineHeight:1.1}}>Add Expense</div>
+                <div style={{fontSize:'12px',color:'rgba(60,6,13,0.36)',marginTop:'4px'}}>Syncs directly to JSONBin on save</div>
+              </div>
+              <button onClick={()=>{setShowModal(false);setFormErr('');}} style={{background:'transparent',border:'none',cursor:'pointer',color:'rgba(60,6,13,0.28)',padding:'4px',display:'flex',alignItems:'center'}}>{Ic.x}</button>
+            </div>
+
+            <div style={{height:'1px',background:C.border,margin:'20px 0'}}/>
+
+            {[
+              {label:'Date',          type:'date',   key:'date',        ph:''},
+              {label:'Description',   type:'text',   key:'description', ph:'e.g. Meta ad spend — April week 2'},
+              {label:'Amount (PKR)',  type:'number', key:'amount',      ph:'0'},
+            ].map(f=>(
+              <div key={f.key} style={{marginBottom:'16px'}}>
+                <label style={{display:'block',fontSize:'10px',fontWeight:600,letterSpacing:'1px',textTransform:'uppercase',color:'rgba(60,6,13,0.46)',marginBottom:'6px'}}>{f.label}</label>
+                <input
+                  type={f.type}
+                  placeholder={f.ph}
+                  value={form[f.key]}
+                  onChange={e=>setForm(p=>({...p,[f.key]:e.target.value}))}
+                  style={{width:'100%',background:C.ivory,border:`1px solid ${C.border}`,borderRadius:'7px',padding:'10px 13px',fontSize:'13px',color:C.wine,outline:'none',fontFamily:"'DM Sans',sans-serif"}}
+                  onFocus={e=>e.target.style.borderColor=C.gold}
+                  onBlur={e=>e.target.style.borderColor=C.border}
+                />
+              </div>
+            ))}
+
+            <div style={{marginBottom:'20px'}}>
+              <label style={{display:'block',fontSize:'10px',fontWeight:600,letterSpacing:'1px',textTransform:'uppercase',color:'rgba(60,6,13,0.46)',marginBottom:'6px'}}>Category</label>
+              <select
+                value={form.category}
+                onChange={e=>setForm(p=>({...p,category:e.target.value}))}
+                style={{width:'100%',background:C.ivory,border:`1px solid ${C.border}`,borderRadius:'7px',padding:'10px 13px',fontSize:'13px',color:C.wine,outline:'none',fontFamily:"'DM Sans',sans-serif",cursor:'pointer'}}>
+                {CATS.map(c=><option key={c}>{c}</option>)}
+              </select>
+            </div>
+
+            {formErr && <div style={{fontSize:'12px',color:'#a82020',marginBottom:'14px',padding:'9px 12px',background:'rgba(168,32,32,0.06)',borderRadius:'6px',border:'1px solid rgba(168,32,32,0.14)'}}>{formErr}</div>}
+
+            <button
+              onClick={handleAdd}
+              disabled={saving}
+              style={{width:'100%',background:C.gold,color:C.noir,border:'none',borderRadius:'7px',padding:'12px',fontSize:'14px',fontWeight:600,cursor:'pointer',fontFamily:"'DM Sans',sans-serif",letterSpacing:'0.3px',marginBottom:'8px',opacity:saving?0.7:1,display:'flex',alignItems:'center',justifyContent:'center',gap:'8px'}}>
+              {saving ? <>{Ic.spin} Syncing…</> : <>{Ic.sync} Save &amp; Sync</>}
+            </button>
+            <button
+              onClick={()=>{setShowModal(false);setFormErr('');}}
+              style={{width:'100%',background:'transparent',color:'rgba(60,6,13,0.4)',border:`1px solid ${C.border}`,borderRadius:'7px',padding:'10px',fontSize:'13px',cursor:'pointer',fontFamily:"'DM Sans',sans-serif"}}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── TOAST ────────────────────────────────────────────────────────────── */}
+      {toast && (
+        <div style={{position:'fixed',bottom:'24px',right:'24px',background:toast.type==='warn'?'#5c1a20':C.green,color:C.ivory,padding:'12px 20px',borderRadius:'8px',fontSize:'13px',fontWeight:500,zIndex:200,boxShadow:'0 4px 24px rgba(0,0,0,0.22)',fontFamily:"'DM Sans',sans-serif",display:'flex',alignItems:'center',gap:'8px',letterSpacing:'0.2px',animation:'fadeIn 0.2s ease'}}>
+          <span style={{width:'6px',height:'6px',borderRadius:'50%',background:toast.type==='warn'?'#f87171':C.gold,flexShrink:0}}/>
+          {toast.msg}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Micro-components ─────────────────────────────────────────────────────────
+function Label({children}){
+  return <div style={{fontSize:'10px',fontWeight:600,letterSpacing:'2px',textTransform:'uppercase',color:'rgba(60,6,13,0.34)',marginBottom:'12px'}}>{children}</div>;
+}
+function Val({children}){
+  return <div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:'26px',fontWeight:600,color:'#3c060d',lineHeight:1.1,marginBottom:'6px'}}>{children}</div>;
+}
+function Sub({children}){
+  return <div style={{fontSize:'11px',color:'rgba(60,6,13,0.38)'}}>{children}</div>;
+}
+function Card({icon,label,accent,children}){
+  return (
+    <div style={{background:'#fdfaf4',border:'1px solid rgba(191,147,62,0.18)',borderRadius:'10px',padding:'20px 22px',position:'relative',overflow:'hidden'}}>
+      <div style={{position:'absolute',top:0,left:0,width:'3px',height:'100%',background:accent,borderRadius:'10px 0 0 10px'}}/>
+      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'12px'}}>
+        <span style={{fontSize:'10px',fontWeight:600,letterSpacing:'1.5px',textTransform:'uppercase',color:'rgba(60,6,13,0.44)'}}>{label}</span>
+        <span style={{color:'rgba(60,6,13,0.2)'}}>{icon}</span>
+      </div>
+      {children}
+    </div>
+  );
+}
+function TH({children,right,center,sortable,onClick}){
+  return (
+    <th onClick={onClick} style={{padding:'12px 16px',textAlign:right?'right':center?'center':'left',fontSize:'10px',fontWeight:600,letterSpacing:'1.5px',textTransform:'uppercase',color:'rgba(245,240,230,0.5)',cursor:sortable?'pointer':'default',userSelect:'none',whiteSpace:'nowrap'}}>
+      {children}
+    </th>
+  );
+}
+function TD({children,right,max}){
+  return (
+    <td style={{padding:'12px 16px',fontSize:'13px',color:'#3c060d',borderBottom:'1px solid rgba(191,147,62,0.09)',textAlign:right?'right':'left',maxWidth:max?'220px':'none',overflow:max?'hidden':'visible',textOverflow:max?'ellipsis':'clip',whiteSpace:max?'nowrap':'normal'}}>
+      {children}
+    </td>
+  );
+}
+
+// ─── Shared style objects ──────────────────────────────────────────────────────
+const sel = {
+  background:'#fdfaf4', border:'1px solid rgba(191,147,62,0.18)', borderRadius:'6px',
+  padding:'8px 12px', fontSize:'12px', color:'#3c060d', outline:'none',
+  fontFamily:"'DM Sans',sans-serif", cursor:'pointer',
+};
+const mb = {
+  background:'transparent', border:'1px solid rgba(60,6,13,0.12)', borderRadius:'4px',
+  padding:'3px 8px', fontSize:'11px', cursor:'pointer', fontFamily:"'DM Sans',sans-serif", fontWeight:500,
+};
+
+// ─── Mount ─────────────────────────────────────────────────────────────────────
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>
